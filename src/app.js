@@ -29,10 +29,14 @@ app.use(helmet({
 
 app.use(cors({
   origin: (origin, callback) => {
-    const allowedOrigins = (process.env.CLIENT_URL || 'http://localhost:3000').split(',');
-    if (!origin || allowedOrigins.includes(origin)) {
+    const allowedOrigins = (process.env.CLIENT_URL || 'http://localhost:3000')
+      .split(',')
+      .map(url => url.trim().replace(/\/$/, ''));
+      
+    if (!origin || allowedOrigins.includes(origin) || origin.endsWith('.vercel.app')) {
       callback(null, true);
     } else {
+      console.error('CORS blocked origin:', origin);
       callback(new Error('Not allowed by CORS'));
     }
   },
