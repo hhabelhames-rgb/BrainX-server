@@ -38,30 +38,10 @@ const register = async (req, res, next) => {
       console.error('Email send failed:', emailErr.message);
     }
 
-    // Generate tokens
-    const accessToken = signAccessToken(user._id);
-    const refreshToken = signRefreshToken(user._id);
-
-    // Store refresh token
-    await User.findByIdAndUpdate(user._id, { $push: { refreshTokens: refreshToken } });
-
-    // Set httpOnly cookie for refresh token
-    res.cookie('refreshToken', refreshToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'strict',
-      maxAge: 30 * 24 * 60 * 60 * 1000, // 30d
-    });
-
-    const userObj = user.toObject();
-    delete userObj.password;
-    delete userObj.refreshTokens;
-    delete userObj.emailVerificationToken;
-
     // Generate matches in background
     generateMatchesForUser(user._id).catch(console.error);
 
-    return created(res, { user: userObj, accessToken }, 'Account created. Please verify your email.');
+    return created(res, { user: userObj }, 'Account created. Please check your email to verify your account before logging in.');
   } catch (err) {
     next(err);
   }
@@ -79,6 +59,10 @@ const login = async (req, res, next) => {
 
     if (user.isBlocked) {
       return error(res, 'Your account has been blocked. Please contact support.', 403);
+    }
+
+    if (!user.isVerified) {
+      return error(res, 'Please verify your email address before logging in.', 403);
     }
 
     const isMatch = await user.comparePassword(password);
