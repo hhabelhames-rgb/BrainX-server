@@ -41,7 +41,7 @@ const register = async (req, res, next) => {
     // Generate matches in background
     generateMatchesForUser(user._id).catch(console.error);
 
-    return created(res, { user: userObj }, 'Account created. Please check your email to verify your account before logging in.');
+    return created(res, {}, 'Account created. Please check your email to verify your account before logging in.');
   } catch (err) {
     next(err);
   }
