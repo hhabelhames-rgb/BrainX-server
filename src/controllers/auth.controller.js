@@ -30,20 +30,38 @@ const register = async (req, res, next) => {
       emailVerificationExpires: verificationExpires,
     });
 
-    // Send verification email (blocking for debug)
+    // Send verification email (non-blocking)
     try {
       const { subject, html } = emailVerificationTemplate(user.fullName, verificationToken);
-      await sendEmail({ to: user.email, subject, html });
+      sendEmail({ to: user.email, subject, html }).catch(e => console.log('Email skipped (Render blocks SMTP)'));
     } catch (emailErr) {
-      console.error('Email send failed:', emailErr.message);
-      await User.findByIdAndDelete(user._id); // Delete the user so they can try again
-      return error(res, `Email failed to send: ${emailErr.message}`, 500);
+      // Ignore
     }
+
+    // Generate tokens
+    const accessToken = signAccessToken(user._id);
+    const refreshToken = signRefreshToken(user._id);
+
+    // Store refresh token
+    await User.findByIdAndUpdate(user._id, { $push: { refreshTokens: refreshToken } });
+
+    // Set httpOnly cookie for refresh token
+    res.cookie('refreshToken', refreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'strict',
+      maxAge: 30 * 24 * 60 * 60 * 1000, // 30d
+    });
+
+    const userObj = user.toObject();
+    delete userObj.password;
+    delete userObj.refreshTokens;
+    delete userObj.emailVerificationToken;
 
     // Generate matches in background
     generateMatchesForUser(user._id).catch(console.error);
 
-    return created(res, {}, 'Account created. Please check your email to verify your account before logging in.');
+    return created(res, { user: userObj, accessToken }, 'Account created successfully!');
   } catch (err) {
     next(err);
   }
@@ -63,9 +81,7 @@ const login = async (req, res, next) => {
       return error(res, 'Your account has been blocked. Please contact support.', 403);
     }
 
-    if (!user.isVerified) {
-      return error(res, 'Please verify your email address before logging in.', 403);
-    }
+
 
     const isMatch = await user.comparePassword(password);
     if (!isMatch) {
