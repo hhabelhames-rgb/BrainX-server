@@ -30,38 +30,20 @@ const register = async (req, res, next) => {
       emailVerificationExpires: verificationExpires,
     });
 
-    // Send verification email (non-blocking)
+    // Send verification email
     try {
       const { subject, html } = emailVerificationTemplate(user.fullName, verificationToken);
-      sendEmail({ to: user.email, subject, html }).catch(e => console.log('Email skipped (Render blocks SMTP)'));
+      await sendEmail({ to: user.email, subject, html });
     } catch (emailErr) {
-      // Ignore
+      console.error('Email send failed:', emailErr);
+      await User.findByIdAndDelete(user._id);
+      return error(res, 'Failed to send verification email. Please try again.', 500);
     }
-
-    // Generate tokens
-    const accessToken = signAccessToken(user._id);
-    const refreshToken = signRefreshToken(user._id);
-
-    // Store refresh token
-    await User.findByIdAndUpdate(user._id, { $push: { refreshTokens: refreshToken } });
-
-    // Set httpOnly cookie for refresh token
-    res.cookie('refreshToken', refreshToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'strict',
-      maxAge: 30 * 24 * 60 * 60 * 1000, // 30d
-    });
-
-    const userObj = user.toObject();
-    delete userObj.password;
-    delete userObj.refreshTokens;
-    delete userObj.emailVerificationToken;
 
     // Generate matches in background
     generateMatchesForUser(user._id).catch(console.error);
 
-    return created(res, { user: userObj, accessToken }, 'Account created successfully!');
+    return created(res, {}, 'Account created. Please check your email to verify your account before logging in.');
   } catch (err) {
     next(err);
   }
@@ -81,7 +63,9 @@ const login = async (req, res, next) => {
       return error(res, 'Your account has been blocked. Please contact support.', 403);
     }
 
-
+    if (!user.isVerified) {
+      return error(res, 'Please verify your email address before logging in.', 403);
+    }
 
     const isMatch = await user.comparePassword(password);
     if (!isMatch) {
@@ -113,6 +97,69 @@ const login = async (req, res, next) => {
     return success(res, { user: userObj, accessToken }, 'Logged in successfully');
   } catch (err) {
     next(err);
+  }
+};
+
+// ─── Google Login ────────────────────────────────────────────────────────────
+const { OAuth2Client } = require('google-auth-library');
+const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+
+const googleLogin = async (req, res, next) => {
+  try {
+    const { token } = req.body;
+    if (!token) return error(res, 'Google token is required', 400);
+
+    const ticket = await googleClient.verifyIdToken({
+      idToken: token,
+      audience: process.env.GOOGLE_CLIENT_ID,
+    });
+    const payload = ticket.getPayload();
+    const { email, name, picture } = payload;
+
+    let user = await User.findOne({ email }).select('+refreshTokens');
+
+    if (!user) {
+      // Create new user instantly
+      user = await User.create({
+        fullName: name,
+        email: email,
+        password: crypto.randomBytes(16).toString('hex'), // Random password for OAuth users
+        avatar: picture,
+        isVerified: true, // Google already verified them
+      });
+      generateMatchesForUser(user._id).catch(console.error);
+    }
+
+    if (user.isBlocked) {
+      return error(res, 'Your account has been blocked. Please contact support.', 403);
+    }
+
+    // Tokens
+    const accessToken = signAccessToken(user._id);
+    const refreshToken = signRefreshToken(user._id);
+
+    const tokens = user.refreshTokens || [];
+    tokens.push(refreshToken);
+    if (tokens.length > 5) tokens.splice(0, tokens.length - 5);
+    user.refreshTokens = tokens;
+    user.lastSeen = Date.now();
+    await user.save({ validateBeforeSave: false });
+
+    res.cookie('refreshToken', refreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'strict',
+      maxAge: 30 * 24 * 60 * 60 * 1000,
+    });
+
+    const userObj = user.toObject();
+    delete userObj.password;
+    delete userObj.refreshTokens;
+
+    return success(res, { user: userObj, accessToken }, 'Logged in with Google');
+  } catch (err) {
+    console.error('Google Auth Error:', err);
+    return error(res, 'Failed to authenticate with Google', 401);
   }
 };
 
@@ -264,4 +311,4 @@ const resetPassword = async (req, res, next) => {
   }
 };
 
-module.exports = { register, login, logout, refreshToken, getMe, verifyEmail, forgotPassword, resetPassword };
+module.exports = { register, login, googleLogin, logout, refreshToken, getMe, verifyEmail, forgotPassword, resetPassword };

@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { register, login, logout, refreshToken, getMe, verifyEmail, forgotPassword, resetPassword } = require('../controllers/auth.controller');
+const { register, login, googleLogin, logout, refreshToken, getMe, verifyEmail, forgotPassword, resetPassword } = require('../controllers/auth.controller');
 const { protect } = require('../middleware/auth');
 const validate = require('../middleware/validate');
 const { authLimiter, passwordResetLimiter } = require('../middleware/rateLimiter');
@@ -8,6 +8,7 @@ const { registerValidators, loginValidators, forgotPasswordValidators, resetPass
 
 router.post('/register', registerValidators, validate, register);
 router.post('/login', authLimiter, loginValidators, validate, login);
+router.post('/google', googleLogin);
 router.post('/logout', protect, logout);
 router.post('/refresh', refreshToken);
 router.get('/me', protect, getMe);

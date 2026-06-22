@@ -1,9 +1,15 @@
-const createTransporter = require('../config/email');
+const { Resend } = require('resend');
+
+const resend = new Resend(process.env.RESEND_API_KEY);
 
 const sendEmail = async ({ to, subject, html }) => {
-  const transporter = createTransporter();
-  await transporter.sendMail({
-    from: `"BrainX" <${process.env.EMAIL_USER}>`,
+  if (!process.env.RESEND_API_KEY) {
+    console.warn('RESEND_API_KEY is not set. Email skipped.');
+    return;
+  }
+
+  await resend.emails.send({
+    from: process.env.EMAIL_FROM || 'BrainX <onboarding@resend.dev>',
     to,
     subject,
     html,
