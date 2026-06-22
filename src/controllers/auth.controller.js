@@ -30,12 +30,14 @@ const register = async (req, res, next) => {
       emailVerificationExpires: verificationExpires,
     });
 
-    // Send verification email (non-blocking)
+    // Send verification email (blocking for debug)
     try {
       const { subject, html } = emailVerificationTemplate(user.fullName, verificationToken);
       await sendEmail({ to: user.email, subject, html });
     } catch (emailErr) {
       console.error('Email send failed:', emailErr.message);
+      await User.findByIdAndDelete(user._id); // Delete the user so they can try again
+      return error(res, `Email failed to send: ${emailErr.message}`, 500);
     }
 
     // Generate matches in background
